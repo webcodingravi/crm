@@ -9,8 +9,9 @@ import toast from 'react-hot-toast'
 import 'react-phone-input-2/lib/material.css'
 import moment from 'moment'
 import lodash from 'lodash'
-import Create from './Create'
-import Edit from './Edit'
+import PhoneInput from 'react-phone-input-2'
+
+import * as XLS from "xlsx"
 
 
 axios.defaults.baseURL=apiUrl;
@@ -18,11 +19,11 @@ axios.defaults.baseURL=apiUrl;
 const Customers=() => {
     const [importModel, setImportModal]=useState(false)
     const [open, setOpen]=useState(false)
-    const [editOpen, setEditOpen]=useState(false)
     const [page, setPage]=useState(1)
     const [limit, setLimit]=useState(10)
-    const [editData, setEditData]=useState({})
     const [query, setQuery]=useState('');
+    const [CurrentEditId, setCurrentEditId]=useState(null)
+    const [form]=Form.useForm();
 
     const { data, error, isLoading }=useSWR(`/customer?page=${page}&limit=${limit}&search=${query}`, fetcher)
 
@@ -60,8 +61,8 @@ const Customers=() => {
             render: (item) => (
                 <div className='space-x-3'>
                     <Button onClick={() => {
-                        editCustomer(item._id);
-                        setEditOpen(true);
+                        editCustomer(item);
+                        setOpen(true);
                     }} icon={<EditOutlined />} className='!text-violet-600 !border-violet-600 !border-2' />
                     <Button onClick={() => deleteCustomer(item._id)} icon={<DeleteOutlined />} className='!text-rose-600 !border-rose-600 !border-2' />
                 </div>
@@ -70,17 +71,51 @@ const Customers=() => {
 
     ]
 
-    const editCustomer=async (id) => {
+
+
+    const addCustomer=async (values) => {
         try {
-            const { data }=await axios.get(`/customer/${id}`)
-            if (data.success==false) {
-                toast.message(data.message)
+            const { data }=await axios.post('/customer', values)
+            if (data.success==true) {
+                toast.success(data.message)
+                form.resetFields()
+                setOpen(false)
+                setImportModal(false)
+                mutate(`/customer?page=${page}&limit=${limit}&search=${query}`)
+            } else {
+                toast.error(data.message)
             }
-            setEditData(data)
         }
         catch (err) {
             toast.error(err.message)
         }
+
+    }
+
+    const editCustomer=(item) => {
+        form.setFieldsValue(item)
+
+        setCurrentEditId(item._id)
+    }
+
+    const updateCustomer=async (values) => {
+        try {
+            const { data }=await axios.put(`/customer/${CurrentEditId}`, values)
+            if (data.success==true) {
+                form.resetFields()
+                toast.success(data.message)
+                setOpen(false)
+                setCurrentEditId(null)
+                mutate(`/customer?page=${page}&limit=${limit}&search=${query}`)
+            } else {
+                toast.error(data.message)
+            }
+        }
+
+        catch (err) {
+            toast.error(err.message)
+        }
+
     }
 
     const deleteCustomer=async (id) => {
@@ -98,6 +133,57 @@ const Customers=() => {
             catch (err) {
                 toast.error(err.message)
             }
+        }
+
+    }
+
+    const downloadSample=() => {
+        const a=document.createElement("a")
+        a.href="/sample.xlsx"
+        a.sample="sample.xls"
+        a.click()
+        a.remove()
+    }
+
+
+
+    const importXlsFile=(e) => {
+        const input=e.target;
+        const file=input.files[0]
+        const ext=file.name.split(".").pop()
+        if (ext!=="xlsx"&&ext!=="xls") {
+            return toast.error("Invalid file format please upload xls or xlsx format file")
+        }
+
+        const reader=new FileReader()
+        reader.readAsArrayBuffer(file)
+
+        reader.onload=(e) => {
+            const tmp=[]
+            const result=new Uint8Array(e.target.result)
+            const excelFile=XLS.read(result, { type: "array" })
+            const key=excelFile.SheetNames[0]
+            const sheet=excelFile.Sheets[key]
+            const data=XLS.utils.sheet_to_json(sheet)
+
+            if (!data.length)
+                return toast.error("Your file is empty.")
+
+            for (let item of data) {
+                if (item.email&&item.fullname&&item.mobile) {
+                    tmp.push({
+                        fullname: item.fullname,
+                        email: item.email,
+                        mobile: item.mobile
+                    })
+
+
+                }
+            }
+
+            addCustomer(tmp)
+
+
         }
 
     }
@@ -166,15 +252,66 @@ const Customers=() => {
 
             </div>
 
-
-
             {/* create coustomer model */}
-            <Create open={open} setOpen={setOpen} page={page} limit={limit} query={query} importModel={importModel} setImportModal={setImportModal} />
+            <Modal open={open} footer={null} title={CurrentEditId? 'Edit Customer':'Add Customer'} onCancel={() => { setOpen(false), setCurrentEditId(null), form.resetFields() }} maskClosable={false} forceRender>
+                <Divider />
+                <Form form={form} layout='vertical' onFinish={CurrentEditId? updateCustomer:addCustomer}>
+                    <Form.Item
+                        label="Customer's Name"
+                        rules={[{ required: true }]}
+                        name="fullname"
+                    >
+                        <Input size='large' placeholder='Mr. Ravi'></Input>
+                    </Form.Item>
+
+                    <Form.Item
+                        label="Email"
+                        name="email"
+                        rules={[{ required: true, type: "email" }]}>
+
+                        <Input size='large' placeholder='mail@gmail.com'></Input>
+                    </Form.Item>
+
+                    <Form.Item
+                        name="mobile"
+                        rules={[{ required: true }]}
+                    >
+                        <PhoneInput
+                            country={'in'}
+                            containerClass='!w-full'
+                            inputClass='!w-full'
+                        />
+                    </Form.Item>
 
 
+                    <Form.Item>
+                        <Button icon={<UserAddOutlined />} type='primary' htmlType="submit" size="large">{CurrentEditId? 'Save':'Add Now'}</Button>
+                    </Form.Item>
+                </Form>
+            </Modal>
 
-            {/* Edit coustomer model */}
-            <Edit editOpen={editOpen} setEditOpen={setEditOpen} page={page} limit={limit} query={query} editData={editData} />
+
+            <Modal open={importModel} footer={null} title="Import Customers Record" onCancel={() => setImportModal(false)}>
+                <Divider />
+                <div className="grid grid-cols-2">
+                    <div className="space-y-4">
+                        <h1 className='text-xl font-semibold'>
+                            Sample .XLSX File format
+                        </h1>
+                        <Button icon={<DownloadOutlined />} size='large' onClick={downloadSample}>Download Sample</Button>
+                    </div>
+                    <div className='flex justify-center'>
+                        <Button className='!w-[100px] !h-[100px] flex flex-col !text-gray-500 relative'>
+                            <UploadOutlined className='text-3xl' />
+                            <span>Upload<br />.xls or .xlsx</span>
+                            <input type="file" accept='.xls,.xlsx' className='w-full h-full absolute top-0 left-0 opacity-0' onChange={importXlsFile} />
+                        </Button>
+                    </div>
+                </div>
+
+            </Modal>
+
+
         </>
     )
 }
